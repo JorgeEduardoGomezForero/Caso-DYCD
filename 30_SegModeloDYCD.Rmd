@@ -1,0 +1,455 @@
+---
+title: "Caso de Estudio DYCD"
+author: "Jorge Eduardo Gomez Forero"
+date: "17/02/2021"
+output:
+  html_document:
+    theme: cerulean
+    highlight: haddock
+    toc: yes
+    toc_float: true
+---
+
+## 1. Descripción del Estudio
+
+El Banco DYCD desea segmentar las variables que le permitan entender y facilitar la toma de decisiones, frente a la segmentación de fuga de clientes.
+
+Para el desarrollo de este estudio, la compañia suministra la bases de datos:
+
+*Base prueba DCYD.xlsx: 521 registros de los clientes que presentaron deserción con 67 campos discriminados entre variables sociodemograficas, endeudamiento, salario entre otras.*
+
+```{r, warning=F}
+library(readxl) #Leer archivo de Excel
+library(rpart)  #Libreria para generar arból de decisión
+library(rpart.plot)  #grágica del arbol de decisión
+library(dplyr) #Operador %>%
+library(ggplot2) #Gráficas
+library(caret) # función matriz de confución (confusionMatrix)
+```
+
+
+## 2.	Recategorización, creación y exclusión de la información:
+
+•	Descripción del proceso de recategorización (datos faltantes a NS/NR, unificación de categorías, transformaciones de variables entre otras).
+
+En terminos generales la base de datos presenta información organizada, solo se ajustaron 3 variables y se crearon 2 a partir de la informaciòn proporcionada en la base.
+
+Variable | Recategorización
+----| -------------------
+ComportamientoExterno  | 1= Presenta comportamiento, 0= No presenta comportamiento
+CondicionDesercion  | 1 = Presenta deserción
+TieneAlivio  | 1 = Tiene Alivio, 0 = Celdas vacías
+Deuda Finandina Vs Ingreso  | Proporción de la deuda sobre el ingreso
+Ultimo Saldo Vs Ingreso  | Proporción del último saldo sobre el ingreso
+
+•	Dado un estudio premiliminar que se habia realizado con un reporte de python (archivos 21_DeserTotFinandina.html, 22_DeserVehFinandina.html, 23_DeserLInvFinandina.html), se observa que la base contiene variables que no le aportan al estudio estadístico, teniendo en cuenta que presentan la misma categoria o valor, corresponden a datos sencibles del cliente o solo presentan 1 marca diferente, dichas variables son:
+
+  - NumeroTelefono1
+  - NumeroTelefono2
+  - NumeroTelefono3
+  - Celular1
+  - Celular2
+  - Direccion1
+  - Email1
+  - Email2
+  - SaldoCapital
+  - VrGarantiaActual
+  - TasaTarjeta
+  - TasaAutoEfectivo
+  - TasaVehiculos
+  - P_Edad
+  - AciertaA_Ins
+  - AciertaA_TDC
+  - Cierre
+  - CondicionDesercion
+  - FechaUltimoMovimiento
+  - ComportamientoExterno
+
+```{r, warning=F, echo=FALSE}
+library(readxl) 
+df_desercion <- read_xlsx("10_db_prueba_DYCD.xlsx")
+```
+
+```{r, warning=F, echo=FALSE}
+#Principales estadísticos
+df_desercion2 <- data.frame(dplyr::select(df_desercion, "NumeroIdentificacion","Ingresos","CIUDAD","Genero","RangoEdad",
+              "TarjetaCredito","TarjetaCredito_ESP","Veh_36M","Veh_48M","Veh_60M","Veh_TDC",
+              "AutoEfectivo36M","AutoEfectivo48M","AutoEfectivo60M","AutoEfectivoTDC",
+              "P_CapacidadPago","P_Mor30_24M", "P_Mor90_12M","P_Embargos","P_Recup",
+              "P_CalificacionMRCoBCDE","P_Castigos","P_Score","Politica_Ingresos",
+              "TotalPoliticasIncumplidas","Rta_Estrategia","Riesgo","RangoEdad2", "AciertaA_GN",
+              "Acierta_Master","DF_Portafolio","DF_Producto","CuotaReal","CuotaPotencial",
+              "Deuda financiera","Deuda hipotecaria","Deuda financiera con Finandina",
+              "Deuda financiera-TodasObligFinanc","Deuda financiera sin Hipotecaria",
+              "Maximo cupo TDC","TotalCreditoHipotecario","Clasificacion",
+              "UltimaTasa","Producto","UltimoSaldo","TieneAlivio","Deuda Finandina Vs Ingreso",
+              "Ultimo Saldo Vs Ingreso"))
+
+#para correlación
+df_desercion3 <- data.frame(dplyr::select(df_desercion, "Veh_36M","Veh_48M","Veh_60M","Veh_TDC",                #grupo 1
+              "AutoEfectivo36M","AutoEfectivo48M","AutoEfectivo60M","AutoEfectivoTDC",        #grupo 2
+              "P_CapacidadPago","P_Mor30_24M", "P_Mor90_12M","P_Embargos","P_Recup",
+              "P_CalificacionMRCoBCDE","P_Castigos","P_Score",                                #grupo 3
+              "Politica_Ingresos","TotalPoliticasIncumplidas","Ingresos",
+              "AciertaA_GN","Acierta_Master",                                                 #grupo 4
+              "DF_Portafolio","DF_Producto","Deuda financiera","Deuda hipotecaria",
+              "Deuda financiera con Finandina","Deuda financiera-TodasObligFinanc",
+              "Deuda financiera sin Hipotecaria","TotalCreditoHipotecario",                   #grupo 5
+              "TarjetaCredito","TarjetaCredito_ESP","CuotaReal","CuotaPotencial",              #grupo 6
+              "Maximo cupo TDC","UltimaTasa","UltimoSaldo","TieneAlivio",
+              "Deuda Finandina Vs Ingreso","Ultimo Saldo Vs Ingreso"))                         #grupo 7  
+library(skimr) 
+skim(df_desercion2)
+```
+
+## 3. Correlacion de variables, participación en variables binarias y reducción de dimensionalidad
+
+En el punto anterior, se mencionaron reportes hechos en Python, en donde se hizo evidente que existen grupos de variables con alta correlación, los cuales se visualizaran en este aparte para comenzar con la reducción de dimensiones.
+
+```{r, warning=F, echo=FALSE}
+library(ggcorrplot)
+corr_VehM <- round(cor(df_desercion3[,1:4]), 2)
+ggcorrplot(corr_VehM, hc.order = TRUE,
+           type = "lower",
+           lab = TRUE,
+           lab_size = 4,
+           method="square",
+           colors = c("yellow", "white", "green"),
+           title="Correlación VehM",
+           ggtheme=theme_bw)
+corr_AutoEfectivo <- round(cor(df_desercion3[,5:8]), 2)
+ggcorrplot(corr_AutoEfectivo, hc.order = TRUE,
+           type = "lower",
+           lab = TRUE,
+           lab_size = 4,
+           method="square",
+           colors = c("yellow", "white", "green"),
+           title="Correlación Auto efectivo",
+           ggtheme=theme_bw) 
+corr_Politica <- round(cor(df_desercion3[,9:16]), 2)
+ggcorrplot(corr_Politica, hc.order = TRUE,
+           type = "lower",
+           lab = TRUE,
+           lab_size = 4,
+           method="square",
+           colors = c("yellow", "white", "green"),
+           title="Correlación Politica",
+           ggtheme=theme_bw) 
+corr_Poli_Sco <- round(cor(df_desercion3[,17:21]), 2)
+ggcorrplot(corr_Poli_Sco, hc.order = TRUE,
+           type = "lower",
+           lab = TRUE,
+           lab_size = 4,
+           method="square",
+           colors = c("yellow", "white", "green"),
+           title="Correlación Politica, Acierta Y Comportamiento",
+           ggtheme=theme_bw)
+corr_deuda <- round(cor(df_desercion3[,22:29]), 2)
+ggcorrplot(corr_deuda, hc.order = TRUE,
+           type = "lower",
+           lab = TRUE,
+           lab_size = 4,
+           method="square",
+           colors = c("yellow", "white", "green"),
+           title="Correlación Deudas y Cuota",
+           ggtheme=theme_bw)
+corr_Cupo_Cta <- round(cor(df_desercion3[,30:35]), 2)
+ggcorrplot(corr_Cupo_Cta, hc.order = TRUE,
+           type = "lower",
+           lab = TRUE,
+           lab_size = 4,
+           method="square",
+           colors = c("yellow", "white", "green"),
+           title="Correlación Cupo y Cuota",
+           ggtheme=theme_bw)
+corr_tasa_sdo <- round(cor(df_desercion3[,36:39]), 2)
+ggcorrplot(corr_tasa_sdo, hc.order = TRUE,
+           type = "lower",
+           lab = TRUE,
+           lab_size = 4,
+           method="square",
+           colors = c("yellow", "white", "green"),
+           title="Correlación Tasa y Saldo",
+           ggtheme=theme_bw) 
+```
+
+Existen variables que presentan alta correlacción, lo cual podría generar colinialidad, por esta razón se selecciona una variable que representara a otras u otras variables:
+
+Variable Seleccionada | Representa las Variables
+----| -------------------------------------------
+Veh_48M | Veh_36M, Veh_48M, Veh_60M, Veh_TDC.
+AutoEfectivoTDC | AutoEfectivo36M, AutoEfectivo48M, AutoEfectivo60M   
+P_Score | P_CapacidadPago
+P_Mor30_24M | P_Mor90_12M, P_CalificacionMRCoBCDE
+Acierta_Master | AciertaA_GN 
+DF_Portafolio  | DF_Producto
+Deuda financiera | Deuda financiera-TodasObligFinanc
+Deuda financiera sin Hipotecaria | Deuda hipotecaria 
+Deuda financiera con Finandina  | TotalCreditoHipotecario
+CuotaReal  | CuotaPotencial
+TarjetaCredito  | TarjetaCredito_ESP, Maximo cupo TDC
+
+```{r, warning=F, echo=FALSE}
+df_desercion4 <- data.frame(dplyr::select(df_desercion,"Veh_48M","AutoEfectivoTDC","P_Score","P_Mor30_24M",
+                        "P_Embargos","P_Recup","P_Castigos","Politica_Ingresos",
+                        "TotalPoliticasIncumplidas","Acierta_Master","DF_Portafolio","Deuda financiera",
+                        "Deuda financiera con Finandina","Deuda financiera sin Hipotecaria",
+                        "TarjetaCredito","CuotaReal","Ingresos","UltimaTasa","UltimoSaldo","TieneAlivio")) 
+corr_reduc <- round(cor(df_desercion4[,1:20]), 1)
+ggcorrplot(corr_reduc, hc.order = TRUE,
+           type = "lower",
+           lab = F,
+           lab_size = 4,
+           method="square",
+           colors = c("yellow", "white", "green"),
+           title="Correlación reducción Nro. 1",
+           ggtheme=theme_bw)
+```  
+
+Existe un grupo de variables binarias, las cuales seran estudiadas para revisar la participación de cada marca y de esta manera decidir si se mantienen o excluyen:
+
+```{r, warning=F, echo=FALSE}
+df_dftemp_grp <- 
+  df_desercion %>% dplyr::select(NumeroIdentificacion,P_Score) %>%
+  group_by(P_Score) %>%
+  summarise(Casos = n(), Parti = round(n()/521,4))
+print(df_dftemp_grp); print("La variable P_Score presenta participación en las dos categorias por encima de 2%, se mantendra dentro del estudio")
+
+df_dftemp_grp <- 
+  df_desercion %>% dplyr::select(NumeroIdentificacion,P_Mor30_24M) %>%
+  group_by(P_Mor30_24M) %>%
+  summarise(Casos = n(), Parti = round(n()/521,4))
+print(df_dftemp_grp); print("La variable P_Mor30_24M presenta participación en las dos categorias por debajo de 2%, se excluira dentro del estudio")
+
+df_dftemp_grp <- 
+  df_desercion %>% dplyr::select(NumeroIdentificacion,P_Embargos) %>%
+  group_by(P_Embargos) %>%
+  summarise(Casos = n(), Parti = round(n()/521,4))
+print(df_dftemp_grp); print("La variable P_Embargos presenta participación en las dos categorias por debajo de 2%, se excluira dentro del estudio")
+
+df_dftemp_grp <- 
+  df_desercion %>% dplyr::select(NumeroIdentificacion,P_Recup) %>%
+  group_by(P_Recup) %>%
+  summarise(Casos = n(), Parti = round(n()/521,4))
+print(df_dftemp_grp); print("La variable P_Recup presenta participación en las dos categorias por debajo de 2%, se excluira dentro del estudio") 
+
+df_dftemp_grp <- 
+  df_desercion %>% dplyr::select(NumeroIdentificacion,P_Castigos) %>%
+  group_by(P_Castigos) %>%
+  summarise(Casos = n(), Parti = round(n()/521,4))
+print(df_dftemp_grp); print("La variable P_Castigos presenta participación en las dos categorias por debajo de 2%, se excluira dentro del estudio") 
+
+df_dftemp_grp <- 
+  df_desercion %>% dplyr::select(NumeroIdentificacion,Politica_Ingresos) %>%
+  group_by(Politica_Ingresos) %>%
+  summarise(Casos = n(), Parti = round(n()/521,4))
+print(df_dftemp_grp); print("La variable Politica_Ingresos presenta participación en las dos categorias por debajo de 2%, se excluira dentro del estudio") 
+
+str(df_desercion4)
+```
+
+Dado que la participación de algunas de las variables binarias presentan una alta concentración en alguna de las categorias (0,1), se excluiran aqueyas en las que se observa una categoria con menos del 3% de participación.
+
+Variables excluidas P_Mor30_24M, P_Embargos, P_Recup, P_Castigos, Politica_Ingresos.
+
+```{r, warning=F, echo=FALSE}
+df_desercion5 <- data.frame(dplyr::select(df_desercion,"Veh_48M","AutoEfectivoTDC","P_Score",
+                                   "TotalPoliticasIncumplidas","Acierta_Master","DF_Portafolio",
+                        "Deuda financiera","Deuda financiera con Finandina",
+                        "Deuda financiera sin Hipotecaria","TarjetaCredito","CuotaReal","Ingresos",
+                        "UltimaTasa","UltimoSaldo","TieneAlivio")) 
+corr_reduc <- round(cor(df_desercion5[,1:15]), 1)
+ggcorrplot(corr_reduc, hc.order = TRUE,
+           type = "lower",
+           lab = F,
+           lab_size = 4,
+           method="square",
+           colors = c("yellow", "white", "green"),
+           title="Correlación reducción Nro. 2",
+           ggtheme=theme_bw)
+``` 
+
+## 4. Normalización de variables Y Modelo No Supervisado
+
+Se realiza una normalización de las variables númericas (diferente a las binarias) con el objetivo de eliminar el efecto de las distancias, dada la escala de cada una. 
+
+```{r, warning=F, echo=FALSE}
+clus<-data.frame(dplyr::select(df_desercion,"NumeroIdentificacion",
+                        "Veh_48M","AutoEfectivoTDC","P_Score",
+                        "TotalPoliticasIncumplidas","Acierta_Master","DF_Portafolio",
+                        "Deuda financiera","Deuda financiera con Finandina",
+                        "Deuda financiera sin Hipotecaria","TarjetaCredito","CuotaReal","Ingresos",
+                        "UltimaTasa","UltimoSaldo","TieneAlivio"))
+clus$TieneAlivio <- as.factor(clus$TieneAlivio)
+```
+
+
+Normalización de las Variables -->> Var - Media(Var)/Desviación (Var)  
+  
+```{r, warning=F, echo=FALSE}
+clus$Veh_48M <- (clus$Veh_48M-mean(clus$Veh_48M))/sd(clus$Veh_48M)
+clus$AutoEfectivoTDC <- (clus$AutoEfectivoTDC-mean(clus$AutoEfectivoTDC))/sd(clus$AutoEfectivoTDC)
+clus$Acierta_Master <- (clus$Acierta_Master-mean(clus$Acierta_Master))/sd(clus$Acierta_Master)
+clus$DF_Portafolio <- (clus$DF_Portafolio-mean(clus$DF_Portafolio))/sd(clus$DF_Portafolio)
+clus$Deuda.financiera <- (clus$Deuda.financiera-mean(clus$Deuda.financiera))/sd(clus$Deuda.financiera)
+clus$Deuda.financiera.con.Finandina <- (clus$Deuda.financiera.con.Finandina-mean(clus$Deuda.financiera.con.Finandina))/sd(clus$Deuda.financiera.con.Finandina)
+clus$Deuda.financiera.sin.Hipotecaria <- (clus$Deuda.financiera.sin.Hipotecaria-mean(clus$Deuda.financiera.sin.Hipotecaria))/sd(clus$Deuda.financiera.sin.Hipotecaria)
+clus$TarjetaCredito <- (clus$TarjetaCredito-mean(clus$TarjetaCredito))/sd(clus$TarjetaCredito)
+clus$CuotaReal <- (clus$CuotaReal-mean(clus$CuotaReal))/sd(clus$CuotaReal)
+clus$Ingresos <- (clus$Ingresos-mean(clus$Ingresos))/sd(clus$Ingresos)
+clus$UltimaTasa <- (clus$UltimaTasa-mean(clus$UltimaTasa))/sd(clus$UltimaTasa)
+clus$UltimoSaldo <- (clus$UltimoSaldo-mean(clus$UltimoSaldo))/sd(clus$UltimoSaldo)
+```
+
+Gráfica de la suma de cuadrados para identificar el número optimo de grupos:
+
+```{r, warning=F, echo=FALSE}
+set.seed(180221)
+clus_km <- kmeans(clus[,-c(1)],centers=1)$betweenss
+ for (i in 1:30) clus_km[i] <- kmeans(clus,centers=i)$betweenss
+
+plot(1:30, clus_km, type="l", xlab="Número de grupos",ylab="Sumas de cuadrados entre grupos")
+```
+
+El resultado gráfico sugiere que el punto inflección en donde la curva disminuye la pendiente, se encuentra en los grupos 3 a 4, razón por la cual se define seleccionar 3 Cluster.
+
+```{r, warning=F, echo=FALSE}
+clus <-rename(clus, ID=NumeroIdentificacion, A=Veh_48M, B=AutoEfectivoTDC, C=P_Score,
+       D=TotalPoliticasIncumplidas, E=Acierta_Master, G=DF_Portafolio,
+       H=Deuda.financiera, I=Deuda.financiera.con.Finandina, 
+       J=Deuda.financiera.sin.Hipotecaria, K=TarjetaCredito, L =CuotaReal, M=Ingresos,
+       N=UltimaTasa,O=UltimoSaldo, P=TieneAlivio)
+str(clus)
+```
+
+
+```{r, warning=F, echo=FALSE}
+grp = 3 #E grupos seleccionados de cluster
+set.seed(180221)
+kmeans_Mod <-kmeans(clus[,-1], grp, nstart = 15)
+kmeans_Mod
+```
+
+
+```{r, warning=F, echo=FALSE}
+grupos=kmeans_Mod$cluster
+table(grupos) #Matriz de confusión
+```
+
+```{r, warning=F, echo=FALSE}
+library(MASS)
+centers <- kmeans_Mod$centers
+minim <- apply(clus[,-c(1)], 2, min)
+maxim <- apply(clus[,-c(1)], 2, max)
+maxim <- (as.numeric(maxim))
+minim <- (as.numeric(minim))
+centersde <- t(minim + t(centers) * (maxim-minim))
+data_centers <- data.frame(centersde)
+parcoord(data_centers,col=1:15,lty=1,var.label = TRUE)
+```
+ 
+  |  |  | |
+---------------| ------------------|-----------|-----------------------------
+A = Veh_48M | B = AutoEfectivoTDC | C = P_Score | D = TotalPoliticasIncumplidas  
+E = Acierta_Master | G = DF_Portafolio | H = Deuda.financiera | I = Deuda.financiera.con.Finandina
+J = Deuda.financiera.sin.Hipotecaria | K = TarjetaCredito | L = CuotaReal | M = Ingresos
+N = UltimaTasa | O = UltimoSaldo | P = TieneAlivio |    
+
+### Conclusión Modelo de Segmentación (K-means)
+
+Línea Roja (286 clientes): El segmento 1 presenta alto imcumplimiento de politicas, bajo endeudamiento financiero, bajos ingresos, cuota alta, tasa alta, En su gran mayoria presentaron alivios.
+
+Línea Verde (102 Clientes): El segmento 2 presenta el mayor endeudamiento, menor incumplimiento de politicas, mayores ingresos y mayor puntaje de la central. En su gran mayoría no presentaron alivios.
+
+Línea Negra (129 Clientes): El segmento 3 en donde se observa endeudamiento medio en Vehículo a 48 meses, con bajo incumplimiento de políticas, Acierta un poco más bajo que el 2° segmento, endeudamiento medio en el portafolio y en tarjeta de crédito, en donde se destaca una tasa alta que se puede deber al uso de TDC.
+
+
+## 5. Modelo Supervisado KNN
+
+Con este modelo se busca establecer la capacidad predictora de las variables seleccionadas para identificar los clientes que presentan alivios.
+
+Se definen los conjuntos de entrenamiento y validación 
+
+```{r message = FALSE, warning = F}
+set.seed(190221)
+indices_entrenamiento = sample(1:nrow(clus), 0.7 * nrow(clus))
+indices_prueba = setdiff(1:nrow(clus), indices_entrenamiento)
+
+# Utilizando los índices se conforman los conjuntos de datos.
+datos_entrenamiento = clus[indices_entrenamiento,]
+datos_prueba = clus[indices_prueba,]
+```
+
+Selección de Variables dependientes y variable objetivo
+
+```{r message = FALSE, warning = F}
+# La función toma por aparte las características (X) y las clases (Y)
+train = datos_entrenamiento[, -15]
+train_lab = datos_entrenamiento[, "P"] #Y
+
+test = datos_prueba[, -15]
+test_lab = datos_prueba[, "P"]
+```
+
+Selección de del punto óptimo de vecinos con menor error de clasificación
+
+```{r}
+#librería para utilizar KNN
+library("class")
+
+set.seed(190221)
+max_k = 50
+error = matrix(,max_k, 2)
+
+for (K in 1:max_k){
+  preds = knn(train = train, test = test, cl=train_lab, k = K)
+  error[K, 1] = K 
+  error[K, 2] = 1 - mean(preds == test_lab)
+}
+
+plot(error, type = "l", xlab = "Número de Vecinos", ylab = "Error de Clasificación", 
+     main = "Modelo KNN", col = "blue")
+```
+
+Se observa que el punto con menor error de clasificación se encuentra en 11
+
+Prediciones y precisión del modelo
+
+```{r message = FALSE, warning = F}
+# Arroja la predicción para los datos de test
+set.seed(190221)
+preds = knn(train = train, test = test, cl=train_lab, k =11)
+
+# Si se tabula la predicción (preds) con las clases originales se tiene...
+matriz_confusion = function(Real, Predicted){
+  conf = table(Real, Predicted)
+  accuracy = mean(ifelse(Predicted == Real, 1, 0))
+  return(list("ConfusionMatrix"= conf, "Accuracy" = accuracy))
+}
+
+matriz_confusion(test_lab, preds)
+```
+
+```{r}
+VP <- 52; VN <-33; FN <-17; FP <-55; Tot <- 157
+Sensibilidad = VP / (VP + FN) #% de Casos realmente con Alivio
+Especificidad = VN / (VN + FP) #% de Casos realmente sin Alivio
+Precision = VP / (VP + FP)
+Exactitud = (VP + VN) / Tot
+print(cat(c("Sensibilidad = ", Sensibilidad)))
+print(cat(c("Especificidad = ", Especificidad)))
+print(cat(c("Precisión = ", Precision)))
+```
+
+### Conclusión Modelo de Segmentación (KNN)
+
+Los resultados del modelo no son los esperados, una exactitud de 54% es un valor muy bajo para selecionar un modelo de predicción, además, se observa un valor alto en los falsos positivos y falsos negativos.
+
+## 6. Gobierno de Datos
+
+El gobierno de datos integra todas las políticas y procedimientos que permiten administrar y gestionar de forma adecuada uno de los activos más importantes para las organizaciones, la información. Dentro de los pilares principales se encuentran la relevancia, aprovechamiento, integridad y seguridad de los mismos.
+
+En este caso de estudio se observa que la gran mayoria de los datos tienen alta sensibilidad, en primera instancia se encuentran expuestos los datos personales del cliente (ID, ubicación y contactabilida), como también la información finaciera, lo cual esta bien para el uso interno y su disponibilidad no puede ser abierta a todos los miembros de la organización, de hecho, se deben generar roles de administración, backup y gestión de la demanda de datos que respondan a las necesidades de cada área.
+
+Una metodología de alto impacto para el aseguramiento de la información, en lo que consierne a datos sensibles, es la anonimización de la información, la cual puede tener una tabla relacional con acceso restringido.
+
